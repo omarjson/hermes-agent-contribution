@@ -41,10 +41,22 @@ class TestSwitchModelReasoningOverride:
         agent._ensure_lmstudio_runtime_loaded = MagicMock()
         agent._create_openai_client = MagicMock(return_value=MagicMock())
         return agent
+    def test_fallback_keeps_explicit_session_reasoning_pin(self, monkeypatch):
+        from agent.chat_completion_helpers import _reresolve_fallback_reasoning_config
 
+        policy = MagicMock()
+        policy.config.return_value = {
+            "agent": {"reasoning_effort": "none"},
+            "session_pins": {"reasoning": True},
+        }
+        policy.reasoning_config = {"enabled": False, "effort": "none"}
+        monkeypatch.setattr("gateway.session_policy.active_policy", lambda: policy)
 
+        agent = self._make_fake_agent(model="fallback-model")
+        agent.reasoning_config = {"enabled": True, "effort": "high"}
+        _reresolve_fallback_reasoning_config(agent)
 
-
+        assert agent.reasoning_config == {"enabled": False, "effort": "none"}
     def test_restore_primary_runtime_restores_reasoning(self):
         """restore_primary_runtime should restore reasoning_config from snapshot."""
         from agent.agent_runtime_helpers import restore_primary_runtime

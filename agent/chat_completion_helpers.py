@@ -1946,16 +1946,21 @@ def _update_fallback_context_compressor(agent) -> None:
         revalidate_compression_feasibility(agent)
 
 
-def _reresolve_fallback_reasoning_config(agent) -> None:
-    """Per-model override > global reasoning_effort (YAML False = disabled); a config load
-    failure keeps the current reasoning_config rather than killing the swap."""
+def _reresolve_fallback_reasoning_config(agent, *, route_label: str = "Fallback") -> None:
+    """Route changes retain an explicit session reasoning pick; otherwise use the target model config."""
     try:
-        # Re-resolve reasoning_config for the new fallback model (Closes #21256). Wrapped in try/except
-        # because a config load failure must not kill the swap.
+        from gateway.session_policy import active_policy, session_pinned
+        policy = active_policy()
+        if policy is not None:
+            config = policy.config()
+            if session_pinned(config, 'reasoning', False):
+                agent.reasoning_config = policy.reasoning_config
+                logger.info("%s %s: reasoning_config kept session pin: %s", route_label, agent.model, agent.reasoning_config)
+                return
         from hermes_cli.config import load_config
         from hermes_constants import resolve_reasoning_config
         agent.reasoning_config = resolve_reasoning_config(load_config() or {}, agent.model)
-        logger.info("Fallback %s: reasoning_config resolved: %s", agent.model, agent.reasoning_config)
+        logger.info("%s %s: reasoning_config resolved: %s", route_label, agent.model, agent.reasoning_config)
     except Exception as _reasoning_err:
         logger.debug("Failed to resolve reasoning_config for fallback %s; keeping current: %s", agent.model, _reasoning_err)
 

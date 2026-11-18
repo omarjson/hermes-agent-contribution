@@ -2002,17 +2002,8 @@ def switch_model(
     )
     if hasattr(agent, "context_compressor") and agent.context_compressor:
         _update_switch_compressor(agent, custom_providers, effective_context_length, snapshot)
-    # Re-read the per-model reasoning_effort override so it applies immediately (per-model > global;
-    # YAML False = disabled).
-    try:
-        from hermes_constants import resolve_reasoning_config
-        from hermes_cli.config import load_config as _sm_load_config
-        agent.reasoning_config = resolve_reasoning_config(_sm_load_config() or {}, agent.model)
-        logger.info(
-            "switch_model: reasoning_config resolved for %s: %s", agent.model, agent.reasoning_config
-        )
-    except Exception as _reasoning_err:
-        logger.debug("switch_model: could not re-resolve reasoning_config: %s", _reasoning_err)
+    from agent.chat_completion_helpers import _reresolve_fallback_reasoning_config
+    _reresolve_fallback_reasoning_config(agent, route_label="switch_model")
     # Invalidate the cached system prompt so it rebuilds next turn.
     agent._cached_system_prompt = None
     # Publish the destination capability map only after every runtime setup above has succeeded.
