@@ -74,6 +74,27 @@ def test_status_finds_pm_driver_when_path_omits_it(pm_driver, monkeypatch):
     assert paths.facts_path().read_bytes() == before
 
 
+@pytest.mark.platforms("linux", "macos", "windows")
+def test_status_caches_doctor_probe_for_short_ttl(pm_driver, monkeypatch):
+    from tools.computer_use import permissions
+
+    monkeypatch.delenv("HERMES_CUA_DRIVER_CMD", raising=False)
+    pm_driver  # Ensure PM fact is published.
+    permissions._status_cache.clear()
+    run = MagicMock(return_value=subprocess.CompletedProcess(
+        [str(pm_driver), "--version"], 0, stdout="cua-driver fixture", stderr=""
+    ))
+    monkeypatch.setattr(permissions, "_run", run)
+
+    first = permissions.computer_use_status()
+    call_count = run.call_count
+    second = permissions.computer_use_status()
+
+    assert first == second
+    assert call_count in (2, 3)
+    assert run.call_count == call_count
+
+
 def test_status_missing_pm_binary_is_unknown(pm_driver):
     from tools.computer_use import permissions
 

@@ -11,7 +11,9 @@ import json
 import os
 import subprocess
 import sys
+import time
 from contextlib import suppress
+from copy import deepcopy
 from typing import Any, Dict, Optional
 
 from hermes_cli._subprocess_compat import windows_hide_flags
@@ -21,6 +23,8 @@ _BOOLS = ("accessibility", "screen_recording", "screen_recording_capturable")
 CUA_DRIVER_BUNDLE_ID = "com.trycua.driver"  # the only identity TCC rows and the private daemon are keyed to
 _TCC_SERVICES = {"accessibility": "Accessibility", "screen_recording": "ScreenCapture"}  # status field -> tccutil service
 TCC_FIELDS = tuple(_TCC_SERVICES)
+_STATUS_CACHE_TTL_SECONDS = 30.0
+_status_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 
 def stale_tcc_grant_hint(*missing: str) -> str:
     """Recovery text for grants the daemon reports missing while System Settings shows the CuaDriver toggle ON.
@@ -90,6 +94,14 @@ def computer_use_status(driver_cmd: Optional[str] = None) -> dict[str, Any]:
     from tools.computer_use.cua_backend_driver import resolve_cua_driver_cmd  # same resolver as the tool itself
     plat, name = sys.platform, configured_backend_name()
     binary = resolve_cua_driver_cmd(driver_cmd) if name == DEFAULT_BACKEND else None
+    if binary:
+        from hermes_constants import hermes_home_key
+        cache_key = (hermes_home_key(), str(binary))
+        cached = _status_cache.get(cache_key)
+        if cached is not None:
+            cached_at, cached_status = cached
+            if time.monotonic() - cached_at < _STATUS_CACHE_TTL_SECONDS:
+                return deepcopy(cached_status)
     out: dict[str, Any] = {"platform": plat, "platform_supported": plat in _RUNTIME_PLATFORMS,
                            "installed": bool(binary), "version": None, "ready": None, "can_grant": plat == "darwin",
                            "checks": [], "source": None, "error": None, **{k: None for k in _BOOLS}}
@@ -116,6 +128,8 @@ def computer_use_status(driver_cmd: Optional[str] = None) -> dict[str, Any]:
             out["ready"] = out["accessibility"] is True and out["screen_recording"] is True
     elif doctor is not None:
         out["ready"] = doctor["ok"]  # no TCC model off macOS
+    if binary:
+        _status_cache[cache_key] = (time.monotonic(), deepcopy(out))
     return out
 
 def request_permissions_grant(driver_cmd: Optional[str] = None) -> int:
