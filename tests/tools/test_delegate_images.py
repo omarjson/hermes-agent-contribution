@@ -75,6 +75,7 @@ def test_child_run_sends_multimodal_goal_turn(tmp_path):
 
         def run_conversation(self, user_message, **kw):
             seen["user_message"] = user_message
+            seen["title_user_message"] = kw["title_user_message"]
             return {"final_response": "ok", "completed": True}
 
     class _Parent:
@@ -86,6 +87,7 @@ def test_child_run_sends_multimodal_goal_turn(tmp_path):
         run.seed_workspace()
         result, failure, _ = run.await_child()
     assert failure is None and result["final_response"] == "ok"
+    assert seen["title_user_message"] == "Describe it"
     content = seen["user_message"]
     assert isinstance(content, list) and content[0]["type"] == "text"
     assert [p["type"] for p in content].count("image_url") == 1
