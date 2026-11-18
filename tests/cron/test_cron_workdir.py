@@ -21,6 +21,36 @@ import pytest
 from tests.gateway.fixtures.storage_handles import close_storage_handles, storage_handle
 
 
+def test_construct_cron_agent_passes_job_workdir(tmp_path):
+    from cron.scheduler import _CronAgentSetup, _construct_cron_agent
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    seen = {}
+
+    def fake_agent(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    setup = _CronAgentSetup(
+        model="test/model",
+        runtime={"api_key": "key", "provider": "openai"},
+        prefill_messages=None,
+        max_iterations=5,
+        reasoning_config={"enabled": False, "effort": "none"},
+    )
+    _construct_cron_agent(
+        fake_agent,
+        {"workdir": str(workdir), "enabled_toolsets": []},
+        {},
+        setup,
+        workdir=str(workdir),
+        session_id="cron-test",
+        session_db=None,
+    )
+    assert seen["cwd"] == str(workdir)
+
+
 def _run_owned_job(job, tmp_path):
     """Exercise the production owner bridge with an isolated canonical store."""
     from gateway.session_contract import SessionRef
