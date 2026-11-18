@@ -110,6 +110,28 @@ def test_repeated_setup_routes_records_once(hermes_home, mode, component, config
 
 
 class TestSetupLogging:
+    def test_routed_agent_log_uses_served_profile_rotation_limits(self, hermes_home, tmp_path):
+        from pathlib import Path
+
+        profile_home = tmp_path / "profile-b"
+        (profile_home / "logs").mkdir(parents=True)
+        (profile_home / "config.yaml").write_text(
+            "logging:\n  max_size_mb: 20\n  backup_count: 10\n",
+            encoding="utf-8",
+        )
+        hermes_logging.setup_logging(hermes_home=hermes_home)
+        assert hermes_logging.enable_profile_log_routing([hermes_home, profile_home]) is True
+
+        router = next(
+            handler for handler in hermes_logging._queued_file_handlers
+            if isinstance(handler, hermes_logging._ProfileRoutingFileHandler)
+            and handler._filename == "agent.log"
+        )
+        handler = router._handler_for_home(Path(profile_home).resolve())
+        assert handler is not None
+        assert handler.maxBytes == 20 * 1024 * 1024
+        assert handler.backupCount == 10
+
     def test_profile_routing_follows_context_home(self, hermes_home, tmp_path):
         """Desktop multiplex cron records are written to their owning profile."""
         from hermes_constants import reset_hermes_home_override, set_hermes_home_override

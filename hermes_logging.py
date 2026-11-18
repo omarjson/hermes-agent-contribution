@@ -679,6 +679,7 @@ class _ProfileRoutingFileHandler(logging.Handler):
         self._filename = resolved.name
         self._max_bytes = getattr(existing, "maxBytes", 0)
         self._backup_count = getattr(existing, "backupCount", 0)
+        self._profile_rotation_limits: dict[Path, tuple[int, int]] = {}
         self._profile_handlers: dict[Path, _ManagedRotatingFileHandler] = {}
         self._profile_handlers_lock = threading.RLock()
         self._router_closed = False  # under _profile_handlers_lock; close() is final
@@ -687,6 +688,25 @@ class _ProfileRoutingFileHandler(logging.Handler):
         self.setFormatter(existing.formatter)
         for log_filter in existing.filters:
             self.addFilter(log_filter)
+        if self._filename == "agent.log":
+            self._profile_rotation_limits[self._default_home] = (self._max_bytes, self._backup_count)
+            for home in self._profile_homes:
+                max_bytes, backup_count = self._rotation_limits_for_home(home)
+                self._profile_rotation_limits[home] = (max_bytes, backup_count)
+
+    def _rotation_limits_for_home(self, home: Path) -> tuple[int, int]:
+        """Resolve a served profile's own agent.log limits before any listener-thread work."""
+        if home == self._default_home:
+            return self._max_bytes, self._backup_count
+        try:
+            from agent.runtime_scope import bind_profile_scope
+            with bind_profile_scope(home, hydrate_secrets=False):
+                _level, max_size_mb, backup_count = _read_logging_config()
+        except Exception:
+            max_size_mb, backup_count = None, None
+        size = max_size_mb if isinstance(max_size_mb, int) and not isinstance(max_size_mb, bool) and max_size_mb > 0 else 5
+        backups = backup_count if isinstance(backup_count, int) and not isinstance(backup_count, bool) and backup_count > 0 else 3
+        return size * 1024 * 1024, backups
 
     def _home_for_record(self, record: logging.LogRecord) -> Path:
         raw_home = getattr(record, "hermes_home", "")
@@ -730,9 +750,15 @@ class _ProfileRoutingFileHandler(logging.Handler):
         # ``logging.shutdown`` (uvicorn's ``dictConfig``) holds that lock while it acquires each
         # handler's lock and closes it (``close`` takes ``_profile_handlers_lock``). Holding
         # either router lock here deadlocked the QueueListener against ``dictConfig`` (T23).
+        max_bytes = self._max_bytes
+        backup_count = self._backup_count
+        if self._filename == "agent.log":
+            max_bytes, backup_count = self._profile_rotation_limits.get(
+                home, (self._max_bytes, self._backup_count)
+            )
         built = _new_file_handler(
-            home / "logs" / self._filename, level=self.level, max_bytes=self._max_bytes,
-            backup_count=self._backup_count, formatter=self.formatter,
+            home / "logs" / self._filename, level=self.level, max_bytes=max_bytes,
+            backup_count=backup_count, formatter=self.formatter,
         )
         built._skip_write_when_dir_missing = home != self._default_home
         built._never_reopen_after_close = True
@@ -972,6 +998,10 @@ def enable_profile_log_routing(profile_homes: Sequence[str | Path]) -> bool:
             for handler in routers:
                 with handler._profile_handlers_lock:
                     handler._profile_homes = handler._profile_homes.union(homes)
+                    if handler._filename == "agent.log":
+                        for home in homes:
+                            if home not in handler._profile_rotation_limits:
+                                handler._profile_rotation_limits[home] = handler._rotation_limits_for_home(home)
             return True
         listener = _queue_listener
         if listener is not None:
